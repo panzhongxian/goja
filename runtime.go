@@ -1991,6 +1991,24 @@ func (r *Runtime) SetRandSource(source RandSource) {
 	r.rand = source
 }
 
+func (r *Runtime) SetRecordFuncCallFlag(flag bool) {
+	r.vm.recordFuncCallFlag = flag
+}
+
+func (r *Runtime) GetRecordFuncCallFlag() bool {
+	return r.vm.recordFuncCallFlag
+}
+
+func (r *Runtime) FetchCalledFuncRecord() []FuncCallRecord {
+	return r.vm.calledFuncRecords
+}
+
+func (r *Runtime) DumpCalledFuncRecord() []FuncCallRecord {
+	s := r.vm.calledFuncRecords
+	r.vm.calledFuncRecords = make([]FuncCallRecord, 0)
+	return s
+}
+
 // SetTimeSource sets the current time source for this Runtime.
 // If not called, the default time.Now() is used.
 func (r *Runtime) SetTimeSource(now Now) {

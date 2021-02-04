@@ -100,6 +100,12 @@ func (r *unresolvedRef) refname() unistring.String {
 	return r.name
 }
 
+type FuncCallRecord struct {
+	FuncName unistring.String
+	Depth    int
+	Action   string
+}
+
 type vm struct {
 	r            *Runtime
 	prg          *Program
@@ -108,11 +114,15 @@ type vm struct {
 	stack        valueStack
 	sp, sb, args int
 
-	stash     *stash
-	callStack []context
-	iterStack []iterStackItem
-	refStack  []ref
-	newTarget Value
+	stash               *stash
+	callStack           []context
+	iterStack           []iterStackItem
+	refStack            []ref
+	recordFuncCallFlag  bool
+	calledFuncNameStack []unistring.String
+	calledFuncRecords   []FuncCallRecord
+	curFuncName         unistring.String
+	newTarget           Value
 
 	stashAllocs int
 	halt        bool
@@ -294,6 +304,30 @@ func (vm *vm) newStash() {
 }
 
 func (vm *vm) init() {
+	vm.recordFuncCallFlag = false
+}
+func isEnterFrame(v interface{}) bool {
+	if _, ok := v.(enterFunc); ok {
+		return true
+	}
+
+	if _, ok := v.(enterFuncStashless); ok {
+		return true
+	}
+	return false
+}
+
+func isRetFrame(v interface{}) bool {
+	if _, ok := v.(_retStashless); ok {
+		return true
+	}
+	if _, ok := v.(_ret); ok {
+		return true
+	}
+	if _, ok := v.(_retFinally); ok {
+		return true
+	}
+	return false
 }
 
 func (vm *vm) run() {
@@ -304,6 +338,38 @@ func (vm *vm) run() {
 		if interrupted = atomic.LoadUint32(&vm.interrupted) != 0; interrupted {
 			break
 		}
+
+		if vm.recordFuncCallFlag {
+			if s, ok := vm.prg.code[vm.pc].(getVar1Callee); ok {
+				vm.curFuncName = unistring.String(s)
+			}
+
+			if isEnterFrame(vm.prg.code[vm.pc]) {
+				if len(vm.curFuncName) > 0 {
+					vm.calledFuncRecords = append(vm.calledFuncRecords, FuncCallRecord{
+						FuncName: vm.curFuncName,
+						Depth:    len(vm.calledFuncNameStack),
+						Action:   "enter",
+					})
+				}
+				vm.calledFuncNameStack = append(vm.calledFuncNameStack, vm.curFuncName)
+				vm.curFuncName = ""
+			}
+
+			if isRetFrame(vm.prg.code[vm.pc]) {
+				if l := len(vm.calledFuncNameStack) - 1; l >= 0 {
+					if funcName := unistring.String(vm.calledFuncNameStack[l]); len(funcName) > 0 {
+						vm.calledFuncRecords = append(vm.calledFuncRecords, FuncCallRecord{
+							FuncName: funcName,
+							Depth:    l,
+							Action:   "exit",
+						})
+					}
+					vm.calledFuncNameStack = vm.calledFuncNameStack[:l]
+				}
+			}
+		}
+
 		vm.prg.code[vm.pc].exec(vm)
 		ticks++
 		if ticks > 10000 {
